@@ -1,0 +1,55 @@
+.page-container {
+    margin-top: 2em;
+    padding: 0 1.5em;
+}
+
+/* Обёртка со скроллом */
+.table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+}
+
+/* Таблица шире экрана */
+.full-width-table {
+    min-width: 1500px;
+}
+
+/* Новые строки */
+.new-row {
+    background-color: #e3f2fd !important;
+}
+
+/* Изменённые ячейки */
+.changed-cell {
+    background-color: #c8e6c9 !important;
+    transition: background-color 0.3s ease;
+}
+
+/* Hover */
+.ui.table tbody tr:hover {
+    background-color: #f5f5f5 !important;
+}
+
+.ui.table tbody tr.new-row:hover {
+    background-color: #bbdefb !important;
+}
+
+/* Sticky header */
+.ui.table thead th {
+    position: sticky;
+    top: 0;
+    background: #f9fafb;
+    z-index: 2;
+}
+
+/* Серый текст */
+.muted {
+    color: #999;
+}
+
+/* Адаптив */
+@media (max-width: 768px) {
+    .ui.table {
+        font-size: 0.9em;
+    }
+}
