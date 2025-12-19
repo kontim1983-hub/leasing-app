@@ -157,6 +157,7 @@ function App() {
                             <Table.Header>
                                 <Table.Row>
                                     <Table.HeaderCell>Предмет</Table.HeaderCell>
+                                    <Table.HeaderCell>Местонахождение</Table.HeaderCell>
                                     <Table.HeaderCell>Тип предмета</Table.HeaderCell>
                                     <Table.HeaderCell>Тип ТС</Table.HeaderCell>
                                     <Table.HeaderCell>VIN</Table.HeaderCell>
@@ -164,6 +165,7 @@ function App() {
                                     <Table.HeaderCell>Пробег</Table.HeaderCell>
                                     <Table.HeaderCell>Дней в продаже</Table.HeaderCell>
                                     <Table.HeaderCell>Цена</Table.HeaderCell>
+                                    <Table.HeaderCell>Разница</Table.HeaderCell>
                                     <Table.HeaderCell>Статус</Table.HeaderCell>
                                     <Table.HeaderCell>Фото</Table.HeaderCell>
                                 </Table.Row>
@@ -177,6 +179,9 @@ function App() {
                                     >
                                         <Table.Cell className={getCellClass(r, 'subject')}>
                                             {r.subject}
+                                        </Table.Cell>
+                                        <Table.Cell className={getCellClass(r, 'location')}>
+                                            {r.location}
                                         </Table.Cell>
                                         <Table.Cell className={getCellClass(r, 'subject_type')}>
                                             {r.subject_type}
@@ -201,6 +206,10 @@ function App() {
                                                 <span style={{color: 'red', marginRight: '5px'}}>{r.old_price}</span>
                                             )}
                                             <span style={{color: 'green'}}>{r.approved_price}</span>
+
+                                        </Table.Cell>
+                                        <Table.Cell>
+                                            <span style={{color: 'green'}}>{parseFloat((r.old_price||"0").replace(/,/g, "")) - parseFloat((r.approved_price||"0").replace(/,/g, ""))}</span>
                                         </Table.Cell>
                                         <Table.Cell className={getCellClass(r, 'status')}>
                                             {r.status}
