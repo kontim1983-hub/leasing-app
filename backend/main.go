@@ -19,6 +19,7 @@ import (
 type LeasingRecord struct {
 	ID             int      `json:"id"`
 	Subject        string   `json:"subject"`
+	Location       string   `json:"location"` // ← МЕСТОНАХОЖДЕНИЕ
 	SubjectType    string   `json:"subject_type"`
 	VehicleType    string   `json:"vehicle_type"`
 	VIN            string   `json:"vin"`
@@ -87,6 +88,7 @@ func initDB() {
 	CREATE TABLE IF NOT EXISTS leasing_records (
 		id SERIAL PRIMARY KEY,
 		subject TEXT,
+		location TEXT,
 		subject_type TEXT,
 		vehicle_type TEXT,
 		vin TEXT UNIQUE NOT NULL,
@@ -162,6 +164,7 @@ func processExcel(f *excelize.File) ([]LeasingRecord, error) {
 		row := rows[i]
 
 		subject := getColumnValue(row, 1)
+		location := getColumnValue(row, 29) // ← колонка 29
 		subjectType := getColumnValue(row, 4)
 		vehicleType := getColumnValue(row, 5)
 		vin := getColumnValue(row, 6)
@@ -184,19 +187,20 @@ func processExcel(f *excelize.File) ([]LeasingRecord, error) {
 
 		if !exists {
 			record := LeasingRecord{
-				Subject:        subject,
-				SubjectType:    subjectType,
-				VehicleType:    vehicleType,
-				VIN:            vin,
-				Year:           year,
-				Mileage:        mileage,
-				DaysOnSale:     daysOnSale,
-				ApprovedPrice:  approvedPrice,
-				Status:         status,
-				Photos:         searchPhotos(vin),
-				IsNew:          true,
-				ChangedColumns: []string{},
+				Subject:       subject,
+				Location:      location,
+				SubjectType:   subjectType,
+				VehicleType:   vehicleType,
+				VIN:           vin,
+				Year:          year,
+				Mileage:       mileage,
+				DaysOnSale:    daysOnSale,
+				ApprovedPrice: approvedPrice,
+				Status:        status,
+				Photos:        searchPhotos(vin),
+				IsNew:         true,
 			}
+
 			id, err := insertRecord(record)
 			if err != nil {
 				log.Printf("Failed to insert record: %v", err)
@@ -207,6 +211,7 @@ func processExcel(f *excelize.File) ([]LeasingRecord, error) {
 		} else {
 			changed := compareRecords(existing, LeasingRecord{
 				Subject:       subject,
+				Location:      location,
 				SubjectType:   subjectType,
 				VehicleType:   vehicleType,
 				VIN:           vin,
@@ -232,6 +237,7 @@ func processExcel(f *excelize.File) ([]LeasingRecord, error) {
 			record := LeasingRecord{
 				ID:             existing.ID,
 				Subject:        subject,
+				Location:       location,
 				SubjectType:    subjectType,
 				VehicleType:    vehicleType,
 				VIN:            vin,
@@ -277,9 +283,6 @@ func compareRecords(old, new LeasingRecord) []string {
 	if old.VehicleType != new.VehicleType {
 		changed = append(changed, "vehicle_type")
 	}
-	if old.Year != new.Year {
-		changed = append(changed, "year")
-	}
 	if old.Mileage != new.Mileage {
 		changed = append(changed, "mileage")
 	}
@@ -296,13 +299,12 @@ func compareRecords(old, new LeasingRecord) []string {
 func getRecordByVIN(vin string) (LeasingRecord, bool) {
 	var rec LeasingRecord
 	err := db.QueryRow(`
-		SELECT id, subject, subject_type, vehicle_type, vin, year, mileage,
-		       days_on_sale, approved_price, old_price, status,
-		       COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
-		FROM leasing_records
-		WHERE vin = $1
+		SELECT id, subject, location, subject_type, vehicle_type, vin,
+		       year, mileage, days_on_sale, approved_price, old_price,
+		       status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
+		FROM leasing_records WHERE vin=$1
 	`, vin).Scan(
-		&rec.ID, &rec.Subject, &rec.SubjectType, &rec.VehicleType, &rec.VIN,
+		&rec.ID, &rec.Subject, &rec.Location, &rec.SubjectType, &rec.VehicleType, &rec.VIN,
 		&rec.Year, &rec.Mileage, &rec.DaysOnSale, &rec.ApprovedPrice,
 		&rec.OldPrice, &rec.Status,
 		pq.Array(&rec.Photos), &rec.IsNew, pq.Array(&rec.ChangedColumns),
@@ -316,13 +318,13 @@ func getRecordByVIN(vin string) (LeasingRecord, bool) {
 func insertRecord(record LeasingRecord) (int, error) {
 	var id int
 	err := db.QueryRow(`
-		INSERT INTO leasing_records 
-		(subject, subject_type, vehicle_type, vin, year, mileage, days_on_sale,
+		INSERT INTO leasing_records
+		(subject, location, subject_type, vehicle_type, vin, year, mileage, days_on_sale,
 		 approved_price, old_price, status, photos, is_new, changed_columns)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		RETURNING id
 	`,
-		record.Subject, record.SubjectType, record.VehicleType, record.VIN,
+		record.Subject, record.Location, record.SubjectType, record.VehicleType, record.VIN,
 		record.Year, record.Mileage, record.DaysOnSale, record.ApprovedPrice,
 		record.OldPrice, record.Status, pq.Array(record.Photos), record.IsNew,
 		pq.Array(record.ChangedColumns),
@@ -333,13 +335,13 @@ func insertRecord(record LeasingRecord) (int, error) {
 func updateRecord(record LeasingRecord) error {
 	_, err := db.Exec(`
 		UPDATE leasing_records SET
-			subject=$1, subject_type=$2, vehicle_type=$3,
-			year=$4, mileage=$5, days_on_sale=$6,
-			approved_price=$7, old_price=$8, status=$9,
-			is_new=$10, changed_columns=$11, updated_at=CURRENT_TIMESTAMP
-		WHERE vin=$12
+			subject=$1, location=$2, subject_type=$3, vehicle_type=$4,
+			year=$5, mileage=$6, days_on_sale=$7,
+			approved_price=$8, old_price=$9, status=$10,
+			is_new=$11, changed_columns=$12, updated_at=CURRENT_TIMESTAMP
+		WHERE vin=$13
 	`,
-		record.Subject, record.SubjectType, record.VehicleType, record.Year,
+		record.Subject, record.Location, record.SubjectType, record.VehicleType, record.Year,
 		record.Mileage, record.DaysOnSale, record.ApprovedPrice, record.OldPrice,
 		record.Status, record.IsNew, pq.Array(record.ChangedColumns), record.VIN,
 	)
@@ -356,9 +358,9 @@ func searchPhotos(vin string) []string {
 
 func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT id, subject, subject_type, vehicle_type, vin, year, mileage,
-		       days_on_sale, approved_price, old_price, status, COALESCE(photos, '{}'),
-		       is_new, COALESCE(changed_columns, '{}')
+		SELECT id, subject, location, subject_type, vehicle_type, vin,
+		       year, mileage, days_on_sale, approved_price, old_price,
+		       status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
 		FROM leasing_records ORDER BY updated_at DESC
 	`)
 	if err != nil {
@@ -375,7 +377,7 @@ func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 		var changedCols []string
 
 		err := rows.Scan(
-			&r.ID, &r.Subject, &r.SubjectType, &r.VehicleType, &r.VIN,
+			&r.ID, &r.Subject, &r.Location, &r.SubjectType, &r.VehicleType, &r.VIN,
 			&r.Year, &r.Mileage, &r.DaysOnSale, &r.ApprovedPrice, &r.OldPrice,
 			&r.Status, pq.Array(&photos), &r.IsNew, pq.Array(&changedCols),
 		)
