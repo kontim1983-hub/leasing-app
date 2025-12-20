@@ -19,7 +19,7 @@ import (
 type LeasingRecord struct {
 	ID             int      `json:"id"`
 	Subject        string   `json:"subject"`
-	Location       string   `json:"location"` // ← МЕСТОНАХОЖДЕНИЕ
+	Location       string   `json:"location"`
 	SubjectType    string   `json:"subject_type"`
 	VehicleType    string   `json:"vehicle_type"`
 	VIN            string   `json:"vin"`
@@ -67,9 +67,15 @@ func main() {
 	initDB()
 
 	r := mux.NewRouter()
+
+	// Существующие маршруты
 	r.HandleFunc("/api/upload", uploadHandler).Methods("POST")
 	r.HandleFunc("/api/records", getRecordsHandler).Methods("GET")
 	r.HandleFunc("/api/health", healthHandler).Methods("GET")
+
+	// === НОВЫЕ АДМИН-МАРШРУТЫ ===
+	r.HandleFunc("/api/clear-changed-columns", clearChangedColumnsHandler).Methods("POST")
+	r.HandleFunc("/api/delete-all-records", deleteAllRecordsHandler).Methods("POST")
 
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
@@ -85,26 +91,26 @@ func main() {
 
 func initDB() {
 	query := `
-	CREATE TABLE IF NOT EXISTS leasing_records (
-		id SERIAL PRIMARY KEY,
-		subject TEXT,
-		location TEXT,
-		subject_type TEXT,
-		vehicle_type TEXT,
-		vin TEXT UNIQUE NOT NULL,
-		year TEXT,
-		mileage TEXT,
-		days_on_sale TEXT,
-		approved_price TEXT,
-		old_price TEXT,
-		status TEXT,
-		photos TEXT[],
-		is_new BOOLEAN DEFAULT false,
-		changed_columns TEXT[],
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	`
+    CREATE TABLE IF NOT EXISTS leasing_records (
+       id SERIAL PRIMARY KEY,
+       subject TEXT,
+       location TEXT,
+       subject_type TEXT,
+       vehicle_type TEXT,
+       vin TEXT UNIQUE NOT NULL,
+       year TEXT,
+       mileage TEXT,
+       days_on_sale TEXT,
+       approved_price TEXT,
+       old_price TEXT,
+       status TEXT,
+       photos TEXT[],
+       is_new BOOLEAN DEFAULT false,
+       changed_columns TEXT[],
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    `
 	_, err := db.Exec(query)
 	if err != nil {
 		log.Fatal("Failed to create table:", err)
@@ -116,6 +122,55 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+// Новый обработчик: очистка changed_columns во всех записях
+func clearChangedColumnsHandler(w http.ResponseWriter, r *http.Request) {
+	result, err := db.Exec(`UPDATE leasing_records SET changed_columns = '{}', updated_at = CURRENT_TIMESTAMP`)
+	if err != nil {
+		http.Error(w, "Failed to clear changed_columns", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":       "Все значения в колонке changed_columns успешно очищены",
+		"rows_affected": rowsAffected,
+	})
+}
+
+// Новый обработчик: удаление всех записей из таблицы
+func deleteAllRecordsHandler(w http.ResponseWriter, r *http.Request) {
+	// Защита от случайного вызова — требуем подтверждение в теле запроса
+	var payload struct {
+		Confirm string `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if payload.Confirm != "delete" {
+		http.Error(w, "To delete all records, send JSON: {\"confirm\": \"delete\"}", http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec(`DELETE FROM leasing_records`)
+	if err != nil {
+		http.Error(w, "Failed to delete all records", http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "Все записи успешно удалены из базы",
+		"rows_deleted": rowsAffected,
+	})
+}
+
+// Остальные функции без изменений (оставлены как были)
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(32 << 20)
 	if err != nil {
@@ -164,7 +219,7 @@ func processExcel(f *excelize.File) ([]LeasingRecord, error) {
 		row := rows[i]
 
 		subject := getColumnValue(row, 1)
-		location := getColumnValue(row, 29) // ← колонка 29
+		location := getColumnValue(row, 29)
 		subjectType := getColumnValue(row, 4)
 		vehicleType := getColumnValue(row, 5)
 		vin := getColumnValue(row, 6)
@@ -292,38 +347,55 @@ func compareRecords(old, new LeasingRecord) []string {
 	if old.Status != new.Status {
 		changed = append(changed, "status")
 	}
-	// days_on_sale игнорируем
 	return changed
 }
 
 func getRecordByVIN(vin string) (LeasingRecord, bool) {
 	var rec LeasingRecord
+
+	var subject, location, subjectType, vehicleType sql.NullString
+	var year, mileage, daysOnSale, approvedPrice, oldPrice, status sql.NullString
+
 	err := db.QueryRow(`
-		SELECT id, subject, location, subject_type, vehicle_type, vin,
-		       year, mileage, days_on_sale, approved_price, old_price,
-		       status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
-		FROM leasing_records WHERE vin=$1
-	`, vin).Scan(
-		&rec.ID, &rec.Subject, &rec.Location, &rec.SubjectType, &rec.VehicleType, &rec.VIN,
-		&rec.Year, &rec.Mileage, &rec.DaysOnSale, &rec.ApprovedPrice,
-		&rec.OldPrice, &rec.Status,
+       SELECT id, subject, location, subject_type, vehicle_type, vin,
+              year, mileage, days_on_sale, approved_price, old_price,
+              status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
+       FROM leasing_records WHERE vin=$1
+    `, vin).Scan(
+		&rec.ID,
+		&subject, &location, &subjectType, &vehicleType, &rec.VIN,
+		&year, &mileage, &daysOnSale, &approvedPrice,
+		&oldPrice, &status,
 		pq.Array(&rec.Photos), &rec.IsNew, pq.Array(&rec.ChangedColumns),
 	)
 	if err != nil {
 		return rec, false
 	}
+
+	// Преобразуем NullString → string (NULL становится "")
+	rec.Subject = nullStringToString(subject)
+	rec.Location = nullStringToString(location)
+	rec.SubjectType = nullStringToString(subjectType)
+	rec.VehicleType = nullStringToString(vehicleType)
+	rec.Year = nullStringToString(year)
+	rec.Mileage = nullStringToString(mileage)
+	rec.DaysOnSale = nullStringToString(daysOnSale)
+	rec.ApprovedPrice = nullStringToString(approvedPrice)
+	rec.OldPrice = nullStringToString(oldPrice)
+	rec.Status = nullStringToString(status)
+
 	return rec, true
 }
 
 func insertRecord(record LeasingRecord) (int, error) {
 	var id int
 	err := db.QueryRow(`
-		INSERT INTO leasing_records
-		(subject, location, subject_type, vehicle_type, vin, year, mileage, days_on_sale,
-		 approved_price, old_price, status, photos, is_new, changed_columns)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-		RETURNING id
-	`,
+       INSERT INTO leasing_records
+       (subject, location, subject_type, vehicle_type, vin, year, mileage, days_on_sale,
+        approved_price, old_price, status, photos, is_new, changed_columns)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING id
+    `,
 		record.Subject, record.Location, record.SubjectType, record.VehicleType, record.VIN,
 		record.Year, record.Mileage, record.DaysOnSale, record.ApprovedPrice,
 		record.OldPrice, record.Status, pq.Array(record.Photos), record.IsNew,
@@ -334,13 +406,13 @@ func insertRecord(record LeasingRecord) (int, error) {
 
 func updateRecord(record LeasingRecord) error {
 	_, err := db.Exec(`
-		UPDATE leasing_records SET
-			subject=$1, location=$2, subject_type=$3, vehicle_type=$4,
-			year=$5, mileage=$6, days_on_sale=$7,
-			approved_price=$8, old_price=$9, status=$10,
-			is_new=$11, changed_columns=$12, updated_at=CURRENT_TIMESTAMP
-		WHERE vin=$13
-	`,
+       UPDATE leasing_records SET
+          subject=$1, location=$2, subject_type=$3, vehicle_type=$4,
+          year=$5, mileage=$6, days_on_sale=$7,
+          approved_price=$8, old_price=$9, status=$10,
+          is_new=$11, changed_columns=$12, updated_at=CURRENT_TIMESTAMP
+       WHERE vin=$13
+    `,
 		record.Subject, record.Location, record.SubjectType, record.VehicleType, record.Year,
 		record.Mileage, record.DaysOnSale, record.ApprovedPrice, record.OldPrice,
 		record.Status, record.IsNew, pq.Array(record.ChangedColumns), record.VIN,
@@ -358,11 +430,11 @@ func searchPhotos(vin string) []string {
 
 func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT id, subject, location, subject_type, vehicle_type, vin,
-		       year, mileage, days_on_sale, approved_price, old_price,
-		       status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
-		FROM leasing_records ORDER BY updated_at DESC
-	`)
+       SELECT id, subject, location, subject_type, vehicle_type, vin,
+              year, mileage, days_on_sale, approved_price, old_price,
+              status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
+       FROM leasing_records ORDER BY updated_at DESC
+    `)
 	if err != nil {
 		http.Error(w, "Failed to fetch records", http.StatusInternalServerError)
 		return
@@ -376,10 +448,15 @@ func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 		var photos []string
 		var changedCols []string
 
+		var subject, location, subjectType, vehicleType sql.NullString
+		var year, mileage, daysOnSale, approvedPrice, oldPrice, status sql.NullString
+
 		err := rows.Scan(
-			&r.ID, &r.Subject, &r.Location, &r.SubjectType, &r.VehicleType, &r.VIN,
-			&r.Year, &r.Mileage, &r.DaysOnSale, &r.ApprovedPrice, &r.OldPrice,
-			&r.Status, pq.Array(&photos), &r.IsNew, pq.Array(&changedCols),
+			&r.ID,
+			&subject, &location, &subjectType, &vehicleType, &r.VIN,
+			&year, &mileage, &daysOnSale, &approvedPrice,
+			&oldPrice, &status,
+			pq.Array(&photos), &r.IsNew, pq.Array(&changedCols),
 		)
 		if err != nil {
 			log.Println("Failed scan:", err)
@@ -390,6 +467,18 @@ func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// Преобразуем NULL → ""
+		r.Subject = nullStringToString(subject)
+		r.Location = nullStringToString(location)
+		r.SubjectType = nullStringToString(subjectType)
+		r.VehicleType = nullStringToString(vehicleType)
+		r.Year = nullStringToString(year)
+		r.Mileage = nullStringToString(mileage)
+		r.DaysOnSale = nullStringToString(daysOnSale)
+		r.ApprovedPrice = nullStringToString(approvedPrice)
+		r.OldPrice = nullStringToString(oldPrice)
+		r.Status = nullStringToString(status)
+
 		r.Photos = photos
 		r.ChangedColumns = changedCols
 		records = append(records, r)
@@ -397,6 +486,12 @@ func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(records)
+}
+func nullStringToString(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
 }
 
 func getEnv(key, defaultValue string) string {

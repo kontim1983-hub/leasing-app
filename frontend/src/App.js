@@ -17,6 +17,55 @@ function App() {
         fetchRecords();
     }, []);
 
+
+    const clearChangedColumns = async () => {
+        if (!window.confirm("Вы уверены, что хотите очистить все значения в колонке ChangedColumns?")) return;
+
+        try {
+            const response = await fetch(`${API_URL}/api/clear-changed-columns`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            const data = await response.json();
+            alert(data.message || "ChangedColumns очищены!");
+            // Опционально: обновить данные на странице
+        } catch (err) {
+            alert("Ошибка: " + err.message);
+        }
+    };
+
+    const deleteDatabase = async () => {
+        if (!window.confirm("ВНИМАНИЕ! Это удалит ВСЕ данные из базы навсегда. Вы уверены?")) return;
+
+        const secondConfirm = window.prompt("Для подтверждения введите слово: УДАЛИТЬ");
+        if (secondConfirm !== "УДАЛИТЬ") {
+            alert("Операция отменена");
+            return;
+        }
+
+        try {
+            const response = await fetch(`${API_URL}/api/delete-all-records`, {  // правильный URL
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ confirm: "delete" })  // ← ЭТО ОБЯЗАТЕЛЬНО!
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Ошибка сервера: ${response.status} — ${errorText}`);
+            }
+
+            const data = await response.json();
+            alert(data.message || "Все записи успешно удалены!");
+            setRecords([]);                    // сразу очищаем таблицу
+            setSuccessMessage("База данных очищена");
+        } catch (err) {
+            console.error(err);
+            alert("Ошибка при удалении: " + err.message);
+        }
+    };
     const fetchRecords = async () => {
         setLoading(true);
         setError(null);
@@ -129,7 +178,15 @@ function App() {
                     </Message>
                 )}
             </Segment>
-
+            <div style={{ margin: '20px', padding: '10px', border: '1px solid red' }}>
+                <h3>Админские действия</h3>
+                <button onClick={clearChangedColumns} style={{ marginRight: '10px', padding: '10px', background: '#ff9800' }}>
+                    Очистить ChangedColumns
+                </button>
+                <button onClick={deleteDatabase} style={{ padding: '10px', background: '#f44336', color: 'white' }}>
+                    Удалить всю базу
+                </button>
+            </div>
             <Segment>
                 <Header as="h3">
                     Таблица данных
