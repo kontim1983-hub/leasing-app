@@ -9,8 +9,6 @@ services:
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -44,5 +42,3 @@ services:
     depends_on:
       - backend
 
-volumes:
-  postgres_data:
