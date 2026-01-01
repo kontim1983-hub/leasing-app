@@ -372,7 +372,6 @@ func getRecordByVIN(vin string) (LeasingRecord, bool) {
 		return rec, false
 	}
 
-	// Преобразуем NullString → string (NULL становится "")
 	rec.Subject = nullStringToString(subject)
 	rec.Location = nullStringToString(location)
 	rec.SubjectType = nullStringToString(subjectType)
@@ -463,10 +462,6 @@ func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if len(changedCols) == 0 {
-			continue
-		}
-
 		// Преобразуем NULL → ""
 		r.Subject = nullStringToString(subject)
 		r.Location = nullStringToString(location)
@@ -481,12 +476,17 @@ func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 
 		r.Photos = photos
 		r.ChangedColumns = changedCols
-		records = append(records, r)
+
+		// Добавляем запись, если она новая или есть изменения
+		if r.IsNew || len(r.ChangedColumns) > 0 {
+			records = append(records, r)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(records)
 }
+
 func nullStringToString(ns sql.NullString) string {
 	if ns.Valid {
 		return ns.String
