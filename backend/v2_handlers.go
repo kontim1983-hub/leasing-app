@@ -1,18 +1,28 @@
 package main
 
 import (
+	"context"
+	"crypto/md5"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/chromedp/chromedp"
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
 	"github.com/xuri/excelize/v2"
 )
+
+const screenshotCacheDir = "./screenshots_cache"
 
 type LeasingRecordV2 struct {
 	ID             int      `json:"id"`
@@ -44,8 +54,126 @@ func RegisterV2Routes(r *mux.Router) {
 	r.HandleFunc("/api/v2/clear-changed-columns", clearChangedColumnsHandlerV2).Methods("POST")
 	r.HandleFunc("/api/v2/delete-all-records", deleteAllRecordsHandlerV2).Methods("POST")
 	r.HandleFunc("/api/v2/export", exportExcelHandlerV2).Methods("GET")
+	// Новый endpoint для скриншотов
+	r.HandleFunc("/api/v2/screenshot", screenshotHandlerV2).Methods("GET")
+
+	// Создаём директорию для кэша при старте
+	os.MkdirAll(screenshotCacheDir, 0755)
 }
 
+func screenshotHandlerV2(w http.ResponseWriter, r *http.Request) {
+	url := r.URL.Query().Get("url")
+
+	if url == "" {
+		http.Error(w, "URL parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	hash := md5.Sum([]byte(url))
+	filename := hex.EncodeToString(hash[:]) + ".jpg"
+	cachePath := filepath.Join(screenshotCacheDir, filename)
+
+	// Проверяем кэш
+	if fileInfo, err := os.Stat(cachePath); err == nil {
+		if time.Since(fileInfo.ModTime()) < 7*24*time.Hour {
+			log.Printf("✓ Serving cached screenshot for: %s", url)
+			serveCachedScreenshot(w, cachePath)
+			return
+		}
+	}
+
+	// Генерируем новый скриншот
+	log.Printf("⏳ Generating screenshot for: %s", url)
+	screenshot, err := captureScreenshot(url)
+	if err != nil {
+		log.Printf("❌ Screenshot error for %s: %v", url, err)
+		// Отдаём плейсхолдер вместо ошибки
+		serveErrorPlaceholder(w)
+		return
+	}
+
+	// Сохраняем в кэш
+	if err := ioutil.WriteFile(cachePath, screenshot, 0644); err != nil {
+		log.Printf("⚠️  Failed to cache screenshot: %v", err)
+	} else {
+		log.Printf("✓ Screenshot cached: %s", filename)
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	w.Write(screenshot)
+}
+
+// captureScreenshot с настройками для Docker
+func captureScreenshot(url string) ([]byte, error) {
+	// Опции для работы в Docker (без sandbox)
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("no-sandbox", true),            // ВАЖНО для Docker
+		chromedp.Flag("disable-dev-shm-usage", true), // ВАЖНО для Docker
+		chromedp.Flag("disable-setuid-sandbox", true),
+		chromedp.Flag("disable-web-security", true),
+		chromedp.Flag("disable-features", "VizDisplayCompositor"),
+		chromedp.WindowSize(1280, 720),
+	)
+
+	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer cancel()
+
+	ctx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+	defer cancel()
+
+	// Таймаут на всю операцию
+	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var buf []byte
+
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(url),
+		chromedp.WaitReady("body", chromedp.ByQuery),
+		chromedp.Sleep(2*time.Second),
+		chromedp.CaptureScreenshot(&buf),
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("chromedp error: %w", err)
+	}
+
+	return buf, nil
+}
+
+func serveCachedScreenshot(w http.ResponseWriter, path string) {
+	data, err := ioutil.ReadFile(path)
+	if err != nil {
+		http.Error(w, "Failed to read cached screenshot", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	w.Write(data)
+}
+
+// Отдаём простой плейсхолдер при ошибке
+func serveErrorPlaceholder(w http.ResponseWriter) {
+	// 1x1 прозрачный PNG
+	placeholder := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+		0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+		0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41,
+		0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+		0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+		0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
+	}
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(placeholder)
+}
 func uploadHandlerV2(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(32 << 20)
 	if err != nil {
@@ -128,13 +256,16 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 		city := getCellValueByColumn(f, sheetName, "L", rowNum)
 		actualPrice := getCellValueByColumn(f, sheetName, "K", rowNum)
 
+		// Собираем ссылки из трёх столбцов Excel
+		photos := collectPhotosFromExcel(f, sheetName, rowNum)
+
 		if vin == "" {
 			continue
 		}
 		existing, exists := getRecordByVINV2(vin)
 
 		if !exists {
-			photos := searchPhotos(vin)
+			// Для новых записей используем ссылки из Excel
 			if photos == nil {
 				photos = []string{}
 			}
@@ -188,7 +319,7 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				}
 			}
 
-			photos := existing.Photos
+			// Для обновляемых записей также берём ссылки из Excel
 			if photos == nil {
 				photos = []string{}
 			}
@@ -224,6 +355,24 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 	return result, nil
 }
 
+// collectPhotosFromExcel собирает ссылки из указанных столбцов Excel
+func collectPhotosFromExcel(f *excelize.File, sheetName string, rowNum int) []string {
+	// Укажите здесь буквы столбцов, из которых нужно собирать ссылки
+	// Например: "AL", "AM", "AN" - это столбцы 38, 39, 40
+	photoColumns := []string{"AU", "AT", "AS", "AR", "AQ"} // <-- ИЗМЕНИТЕ НА НУЖНЫЕ ВАМ СТОЛБЦЫ
+
+	photos := make([]string, 0, len(photoColumns))
+
+	for _, col := range photoColumns {
+		link := getCellValueByColumn(f, sheetName, col, rowNum)
+		// Добавляем только непустые ссылки
+		if strings.TrimSpace(link) != "" {
+			photos = append(photos, strings.TrimSpace(link))
+		}
+	}
+
+	return photos
+}
 func compareRecordsV2(old, new LeasingRecordV2) []string {
 	var changed []string
 	if old.Brand != new.Brand {
