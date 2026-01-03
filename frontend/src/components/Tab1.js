@@ -53,18 +53,38 @@ function Tab1() {
         setSuccessMessage(null);
 
         try {
-            const processed = await uploadFile(file);
+            const response = await uploadFile(file);
+            let processed = response?.data ?? response;
 
+            if (!Array.isArray(processed)) {
+                if (processed && Array.isArray(processed.records)) {
+                    processed = processed.records;
+                } else if (processed && Array.isArray(processed.processed)) {
+                    processed = processed.processed;
+                } else {
+                    setSuccessMessage('Файл успешно загружен и обработан');
+                    loadData();
+                    return;
+                }
+            }
             if (processed.length === 0) {
                 setSuccessMessage('Новых изменений не обнаружено');
             } else {
                 const newCount = processed.filter(r => r.is_new).length;
                 const updatedCount = processed.length - newCount;
-                setSuccessMessage(`Обработано записей: ${processed.length} (новых: ${newCount}, обновлённых: ${updatedCount})`);
+                setSuccessMessage(
+                    `Обработано записей: ${processed.length} (новых: ${newCount}, обновлённых: ${updatedCount})`
+                );
                 loadData();
             }
-        } catch (e) {
-            setError(`Ошибка загрузки файла: ${e.response?.data || e.message}`);
+        } catch (err) {
+            console.error('Ошибка при загрузке файла:', err);
+            const message =
+                err.response?.data?.message ||
+                err.response?.data ||
+                err.message ||
+                'Неизвестная ошибка';
+            setError(`Ошибка загрузки файла: ${message}`);
         } finally {
             setUploading(false);
             e.target.value = '';

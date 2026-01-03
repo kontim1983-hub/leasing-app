@@ -25,7 +25,6 @@ type LeasingRecordV2 struct {
 	City           string   `json:"city"`
 	ActualPrice    string   `json:"actual_price"`
 	OldPrice       string   `json:"old_price,omitempty"`
-	Status         string   `json:"status"`
 	Photos         []string `json:"photos"`
 	IsNew          bool     `json:"is_new"`
 	ChangedColumns []string `json:"changed_columns,omitempty"`
@@ -116,31 +115,20 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 	result := make([]LeasingRecordV2, 0)
 
 	for rowNum := 2; rowNum <= len(rows); rowNum++ {
-		brand := getCellValueByColumn(f, sheetName, "K", rowNum)
-		model := getCellValueByColumn(f, sheetName, "L", rowNum)
-		vin := getCellValueByColumn(f, sheetName, "F", rowNum)
-		exposurePeriod := getCellValueByColumn(f, sheetName, "E", rowNum)
-		vehicleType := getCellValueByColumn(f, sheetName, "H", rowNum)
-		vehicleSubtype := getCellValueByColumn(f, sheetName, "I", rowNum)
-		year := getCellValueByColumn(f, sheetName, "R", rowNum)
-		mileage := getCellValueByColumn(f, sheetName, "BA", rowNum)
-		city := getCellValueByColumn(f, sheetName, "P", rowNum)
-		actualPrice := getCellValueByColumn(f, sheetName, "N", rowNum)
-		status := getCellValueByColumn(f, sheetName, "C", rowNum)
-
-		if status == "" {
-			status = "В продаже"
-		}
+		brand := getCellValueByColumn(f, sheetName, "I", rowNum)
+		model := getCellValueByColumn(f, sheetName, "J", rowNum)
+		vin := getCellValueByColumn(f, sheetName, "D", rowNum)
+		exposurePeriod := getCellValueByColumn(f, sheetName, "C", rowNum)
+		vehicleType := getCellValueByColumn(f, sheetName, "F", rowNum)
+		vehicleSubtype := getCellValueByColumn(f, sheetName, "G", rowNum)
+		year := getCellValueByColumn(f, sheetName, "N", rowNum)
+		mileage := getCellValueByColumn(f, sheetName, "AK", rowNum)
+		city := getCellValueByColumn(f, sheetName, "L", rowNum)
+		actualPrice := getCellValueByColumn(f, sheetName, "K", rowNum)
 
 		if vin == "" {
 			continue
 		}
-
-		if status != "" && status != "В продаже" {
-			deleteRecordV2(vin)
-			continue
-		}
-
 		existing, exists := getRecordByVINV2(vin)
 
 		if !exists {
@@ -160,7 +148,6 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				Mileage:        mileage,
 				City:           city,
 				ActualPrice:    actualPrice,
-				Status:         status,
 				Photos:         photos,
 				IsNew:          true,
 				ChangedColumns: []string{},
@@ -185,7 +172,6 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				Mileage:        mileage,
 				City:           city,
 				ActualPrice:    actualPrice,
-				Status:         status,
 			})
 
 			if len(changed) == 0 {
@@ -218,7 +204,6 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				City:           city,
 				ActualPrice:    actualPrice,
 				OldPrice:       oldPrice,
-				Status:         status,
 				Photos:         photos,
 				IsNew:          false,
 				ChangedColumns: changed,
@@ -266,27 +251,24 @@ func compareRecordsV2(old, new LeasingRecordV2) []string {
 	if old.ActualPrice != new.ActualPrice {
 		changed = append(changed, "actual_price")
 	}
-	if old.Status != new.Status {
-		changed = append(changed, "status")
-	}
 	return changed
 }
 
 func getRecordByVINV2(vin string) (LeasingRecordV2, bool) {
 	var rec LeasingRecordV2
 	var brand, model, exposurePeriod, vehicleType, vehicleSubtype sql.NullString
-	var year, mileage, city, actualPrice, oldPrice, status sql.NullString
+	var year, mileage, city, actualPrice, oldPrice sql.NullString
 
 	err := db.QueryRow(`
        SELECT id, brand, model, vin, exposure_period, vehicle_type, vehicle_subtype,
               year, mileage, city, actual_price, old_price,
-              status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
+               COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
        FROM leasing_records_v2 WHERE vin=$1
     `, vin).Scan(
 		&rec.ID,
 		&brand, &model, &rec.VIN, &exposurePeriod, &vehicleType, &vehicleSubtype,
 		&year, &mileage, &city, &actualPrice,
-		&oldPrice, &status,
+		&oldPrice,
 		pq.Array(&rec.Photos), &rec.IsNew, pq.Array(&rec.ChangedColumns),
 	)
 	if err != nil {
@@ -303,7 +285,6 @@ func getRecordByVINV2(vin string) (LeasingRecordV2, bool) {
 	rec.City = nullStringToString(city)
 	rec.ActualPrice = nullStringToString(actualPrice)
 	rec.OldPrice = nullStringToString(oldPrice)
-	rec.Status = nullStringToString(status)
 
 	return rec, true
 }
@@ -312,44 +293,91 @@ func insertRecordV2(record LeasingRecordV2) (int, error) {
 	var id int
 	err := db.QueryRow(`
        INSERT INTO leasing_records_v2
-       (brand, model, vin, exposure_period, vehicle_type, vehicle_subtype, year, mileage, city,
-        actual_price, old_price, status, photos, is_new, changed_columns)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       (brand, 
+        model, 
+        vin, 
+        exposure_period, 
+        vehicle_type, 
+        vehicle_subtype, 
+        year, mileage, 
+        city,
+        actual_price, 
+        old_price, 
+        photos, 
+        is_new, 
+        changed_columns)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING id
     `,
-		record.Brand, record.Model, record.VIN, record.ExposurePeriod, record.VehicleType,
-		record.VehicleSubtype, record.Year, record.Mileage, record.City, record.ActualPrice,
-		record.OldPrice, record.Status, pq.Array(record.Photos), record.IsNew,
-		pq.Array(record.ChangedColumns),
+		record.Brand, record.Model,
+		record.VIN,
+		record.ExposurePeriod,
+		record.VehicleType,
+		record.VehicleSubtype,
+		record.Year,
+		record.Mileage,
+		record.City,
+		record.ActualPrice,
+		record.OldPrice, pq.Array(record.Photos),
+		record.IsNew, pq.Array(record.ChangedColumns),
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func updateRecordV2(record LeasingRecordV2) error {
 	_, err := db.Exec(`
        UPDATE leasing_records_v2 SET
-          brand=$1, model=$2, exposure_period=$3, vehicle_type=$4, vehicle_subtype=$5,
-          year=$6, mileage=$7, city=$8,
-          actual_price=$9, old_price=$10, status=$11,
-          is_new=$12, changed_columns=$13, updated_at=CURRENT_TIMESTAMP
-       WHERE vin=$14
+          brand           = $1,
+          model           = $2,
+          exposure_period = $3,
+          vehicle_type    = $4,
+          vehicle_subtype = $5,
+          year            = $6,
+          mileage         = $7,
+          city            = $8,
+          actual_price    = $9,
+          old_price       = $10,
+          photos          = $11, 
+          is_new          = $12,
+          changed_columns = $13,
+          updated_at      = CURRENT_TIMESTAMP
+       WHERE vin = $14
     `,
-		record.Brand, record.Model, record.ExposurePeriod, record.VehicleType, record.VehicleSubtype,
-		record.Year, record.Mileage, record.City, record.ActualPrice, record.OldPrice,
-		record.Status, record.IsNew, pq.Array(record.ChangedColumns), record.VIN,
+		record.Brand,
+		record.Model,
+		record.ExposurePeriod,
+		record.VehicleType,
+		record.VehicleSubtype,
+		record.Year,
+		record.Mileage,
+		record.City,
+		record.ActualPrice,
+		record.OldPrice,
+		pq.Array(record.Photos),
+		record.IsNew,
+		pq.Array(record.ChangedColumns),
+		record.VIN,
 	)
 	return err
 }
 
-func deleteRecordV2(vin string) {
-	db.Exec("DELETE FROM leasing_records_v2 WHERE vin=$1", vin)
-}
-
 func getRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-       SELECT id, brand, model, vin, exposure_period, vehicle_type, vehicle_subtype,
-              year, mileage, city, actual_price, old_price,
-              status, COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
+       SELECT id, brand, 
+              model, 
+              vin, 
+              exposure_period, 
+              vehicle_type, 
+              vehicle_subtype,
+              year, 
+			   mileage, 
+			   city, 
+			   actual_price, 
+			   old_price,
+             COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
        FROM leasing_records_v2 ORDER BY updated_at DESC
     `)
 	if err != nil {
@@ -364,14 +392,30 @@ func getRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 		var r LeasingRecordV2
 		var photos []string
 		var changedCols []string
-		var brand, model, exposurePeriod, vehicleType, vehicleSubtype sql.NullString
-		var year, mileage, city, actualPrice, oldPrice, status sql.NullString
+		var brand,
+			model,
+			exposurePeriod,
+			vehicleType,
+			vehicleSubtype sql.NullString
+		var year,
+			mileage,
+			city,
+			actualPrice,
+			oldPrice sql.NullString
 
 		err := rows.Scan(
 			&r.ID,
-			&brand, &model, &r.VIN, &exposurePeriod, &vehicleType, &vehicleSubtype,
-			&year, &mileage, &city, &actualPrice,
-			&oldPrice, &status,
+			&brand,
+			&model,
+			&r.VIN,
+			&exposurePeriod,
+			&vehicleType,
+			&vehicleSubtype,
+			&year,
+			&mileage,
+			&city,
+			&actualPrice,
+			&oldPrice,
 			pq.Array(&photos), &r.IsNew, pq.Array(&changedCols),
 		)
 		if err != nil {
@@ -389,11 +433,6 @@ func getRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 		r.City = nullStringToString(city)
 		r.ActualPrice = nullStringToString(actualPrice)
 		r.OldPrice = nullStringToString(oldPrice)
-		r.Status = nullStringToString(status)
-		if r.Status == "" {
-			r.Status = "В продаже"
-		}
-
 		r.Photos = photos
 		r.ChangedColumns = changedCols
 
@@ -459,11 +498,18 @@ func deleteAllRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 		"rows_deleted": rowsAffected,
 	})
 }
-
 func exportExcelHandlerV2(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-       SELECT brand, model, vin, exposure_period, vehicle_type, vehicle_subtype,
-              year, mileage, city, actual_price
+       SELECT brand, 
+              model, 
+              vin, 
+              exposure_period, 
+              vehicle_type, 
+              vehicle_subtype,
+              year, 
+           mileage, 
+           city, 
+           actual_price
        FROM leasing_records_v2 ORDER BY updated_at DESC
     `)
 	if err != nil {
