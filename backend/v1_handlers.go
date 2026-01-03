@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/lib/pq"
@@ -444,7 +446,7 @@ func getRecordsHandler(w http.ResponseWriter, r *http.Request) {
 func exportExcelHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
        SELECT subject, location, subject_type, vehicle_type, vin,
-              year, mileage, days_on_sale, approved_price, status
+              year, mileage, days_on_sale, approved_price, old_price, status
        FROM leasing_records ORDER BY updated_at DESC
     `)
 	if err != nil {
@@ -460,8 +462,7 @@ func exportExcelHandler(w http.ResponseWriter, r *http.Request) {
 	index, _ := f.NewSheet(sheetName)
 	f.SetActiveSheet(index)
 
-	// Заголовки
-	headers := []string{"Предмет лизинга", "Местонахождение", "Вид предмета лизинга", "Вид ТС", "VIN", "Год выпуска", "Пробег", "Дни в продаже", "Согласованная цена", "Статус"}
+	headers := []string{"Предмет лизинга", "Местонахождение", "Вид предмета лизинга", "Вид ТС", "VIN", "Год выпуска", "Пробег", "Дни в продаже", "Текущая цена", "Старая цена", "Разница", "Статус"}
 	for i, header := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheetName, cell, header)
@@ -470,13 +471,27 @@ func exportExcelHandler(w http.ResponseWriter, r *http.Request) {
 	rowNum := 2
 	for rows.Next() {
 		var subject, location, subjectType, vehicleType, vin sql.NullString
-		var year, mileage, daysOnSale, approvedPrice, status sql.NullString
+		var year, mileage, daysOnSale, approvedPrice, oldPrice, status sql.NullString
 
 		err := rows.Scan(&subject, &location, &subjectType, &vehicleType, &vin,
-			&year, &mileage, &daysOnSale, &approvedPrice, &status)
+			&year, &mileage, &daysOnSale, &approvedPrice, &oldPrice, &status)
 		if err != nil {
 			log.Println("Failed scan for export:", err)
 			continue
+		}
+
+		var difference string
+		if oldPrice.Valid && approvedPrice.Valid {
+			oldPriceCleaned := strings.ReplaceAll(oldPrice.String, ",", "")
+			approvedPriceCleaned := strings.ReplaceAll(approvedPrice.String, ",", "")
+
+			oldVal, err1 := strconv.ParseFloat(oldPriceCleaned, 64)
+			approvedVal, err2 := strconv.ParseFloat(approvedPriceCleaned, 64)
+
+			if err1 == nil && err2 == nil {
+				diff := oldVal - approvedVal
+				difference = fmt.Sprintf("%.2f", diff)
+			}
 		}
 
 		values := []string{
@@ -489,6 +504,8 @@ func exportExcelHandler(w http.ResponseWriter, r *http.Request) {
 			nullStringToString(mileage),
 			nullStringToString(daysOnSale),
 			nullStringToString(approvedPrice),
+			nullStringToString(oldPrice),
+			difference,
 			nullStringToString(status),
 		}
 

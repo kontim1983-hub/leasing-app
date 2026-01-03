@@ -197,7 +197,8 @@ function Tab1() {
                                     <Table.HeaderCell>Год</Table.HeaderCell>
                                     <Table.HeaderCell>Пробег</Table.HeaderCell>
                                     <Table.HeaderCell>Дней в продаже</Table.HeaderCell>
-                                    <Table.HeaderCell>Цена</Table.HeaderCell>
+                                    <Table.HeaderCell>Текущая цена</Table.HeaderCell>
+                                    <Table.HeaderCell>Старая цена</Table.HeaderCell>
                                     <Table.HeaderCell>Разница</Table.HeaderCell>
                                     <Table.HeaderCell>Статус</Table.HeaderCell>
                                     <Table.HeaderCell>Фото</Table.HeaderCell>
@@ -216,10 +217,10 @@ function Tab1() {
                                         <Table.Cell className={getCellClass(r, 'mileage')}>{r.mileage}</Table.Cell>
                                         <Table.Cell className={getCellClass(r, 'days_on_sale')}>{r.days_on_sale}</Table.Cell>
                                         <Table.Cell className={getCellClass(r, 'approved_price')}>
-                                            {r.old_price && r.old_price !== r.approved_price && (
-                                                <span style={{ color: 'red', marginRight: '5px' }}>{r.old_price}</span>
-                                            )}
                                             <span style={{ color: 'green' }}>{r.approved_price}</span>
+                                        </Table.Cell>
+                                        <Table.Cell className={getCellClass(r, 'approved_price')}>
+                                                <span style={{ color: 'red', marginRight: '5px' }}>{r.old_price}</span>
                                         </Table.Cell>
                                         <Table.Cell>
                                             <span style={{ color: 'green' }}>
