@@ -4,6 +4,7 @@ import 'semantic-ui-css/semantic.min.css';
 import './App.css';
 import Tab1 from './components/Tab1';
 import Tab2 from './components/Tab2';
+import Tab3 from "./components/Tab3";
 
 function App() {
     const [activeTab, setActiveTab] = useState(0);
@@ -16,6 +17,10 @@ function App() {
         {
             menuItem: 'Вкладка 2',
             render: () => <Tab.Pane><Tab2 /></Tab.Pane>,
+        },
+        {
+            menuItem: 'Вкладка 3',
+            render: () => <Tab.Pane><Tab3 /></Tab.Pane>,
         },
     ];
 

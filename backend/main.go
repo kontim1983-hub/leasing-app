@@ -17,6 +17,7 @@ import (
 var db *sql.DB
 var uploadedFiles []string
 var uploadedFilesV2 []string
+var uploadedFilesV3 []string
 var filesMutex sync.RWMutex
 
 func main() {
@@ -56,6 +57,8 @@ func main() {
 
 	// V2 routes (вторая вкладка)
 	RegisterV2Routes(r)
+
+	RegisterV3Routes(r)
 
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
@@ -119,6 +122,33 @@ func initDB() {
     );
     `
 	_, err = db.Exec(query2)
+	if err != nil {
+		log.Fatal("Failed to create table v2:", err)
+	}
+
+	query3 := `
+    CREATE TABLE IF NOT EXISTS leasing_records_v3 (
+       id SERIAL PRIMARY KEY,
+       brand TEXT,
+       model TEXT,
+       vin TEXT UNIQUE NOT NULL,
+       exposure_period TEXT,
+       vehicle_type TEXT,
+       vehicle_subtype TEXT,
+       year TEXT,
+       mileage TEXT,
+       city TEXT,
+       actual_price TEXT,
+       old_price TEXT,
+       status TEXT,
+       photos TEXT[],
+       is_new BOOLEAN DEFAULT false,
+       changed_columns TEXT[],
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    `
+	_, err = db.Exec(query3)
 	if err != nil {
 		log.Fatal("Failed to create table v2:", err)
 	}

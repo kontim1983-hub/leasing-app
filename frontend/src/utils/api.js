@@ -63,9 +63,19 @@ export const fetchRecordsV2 = async () => {
     const res = await axios.get(`${API_URL}/api/v2/records`);
     return res.data || [];
 };
+export const fetchRecordsV3 = async () => {
+    const res = await axios.get(`${API_URL}/api/v3/records`);
+    return res.data || [];
+};
 
 export const fetchFilesV2 = async () => {
     const res = await fetch(`${API_URL}/api/v2/files`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+};
+export const fetchFilesV3 = async () => {
+    const res = await fetch(`${API_URL}/api/v3/files`);
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
@@ -81,9 +91,26 @@ export const uploadFileV2 = async (file) => {
 
     return res.data.records || [];
 };
+export const uploadFileV3 = async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await axios.post(`${API_URL}/api/v3/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+
+    return res.data.records || [];
+};
 
 export const clearChangedColumnsV2 = async () => {
     const response = await fetch(`${API_URL}/api/v2/clear-changed-columns`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    return await response.json();
+};
+export const clearChangedColumnsV3 = async () => {
+    const response = await fetch(`${API_URL}/api/v3/clear-changed-columns`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
     });
@@ -104,7 +131,34 @@ export const deleteAllRecordsV2 = async () => {
 
     return await response.json();
 };
+export const deleteAllRecordsV3 = async () => {
+    const response = await fetch(`${API_URL}/api/v3/delete-all-records`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: "delete" }),
+    });
 
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ошибка сервера: ${response.status} — ${errorText}`);
+    }
+
+    return await response.json();
+};
+export const exportExcelV3 = async () => {
+    const response = await fetch(`${API_URL}/api/v3/export`);
+    if (!response.ok) throw new Error('Ошибка экспорта');
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'leasing_records_v2.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+};
 export const exportExcelV2 = async () => {
     const response = await fetch(`${API_URL}/api/v2/export`);
     if (!response.ok) throw new Error('Ошибка экспорта');
@@ -119,6 +173,7 @@ export const exportExcelV2 = async () => {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
 };
+
 export const exportExcel = async () => {
     const response = await fetch(`${API_URL}/api/export`);
     if (!response.ok) throw new Error('Ошибка экспорта');

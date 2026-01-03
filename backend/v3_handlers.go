@@ -14,7 +14,7 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-type LeasingRecordV2 struct {
+type LeasingRecordV3 struct {
 	ID             int      `json:"id"`
 	Brand          string   `json:"brand"`
 	Model          string   `json:"model"`
@@ -27,26 +27,28 @@ type LeasingRecordV2 struct {
 	City           string   `json:"city"`
 	ActualPrice    string   `json:"actual_price"`
 	OldPrice       string   `json:"old_price,omitempty"`
+	Status         string   `json:"status"`
 	Photos         []string `json:"photos"`
 	IsNew          bool     `json:"is_new"`
 	ChangedColumns []string `json:"changed_columns,omitempty"`
 }
 
-func RegisterV2Routes(r *mux.Router) {
-	r.HandleFunc("/api/v2/upload", uploadHandlerV2).Methods("POST")
-	r.HandleFunc("/api/v2/records", getRecordsHandlerV2).Methods("GET")
-	r.HandleFunc("/api/v2/files", func(w http.ResponseWriter, r *http.Request) {
+func RegisterV3Routes(r *mux.Router) {
+	r.HandleFunc("/api/v3/upload", uploadHandlerV3).Methods("POST")
+	r.HandleFunc("/api/v3/records", getRecordsHandlerV3).Methods("GET")
+	//r.HandleFunc("/api/v3/health", healthHandler).Methods("GET")
+	r.HandleFunc("/api/v3/files", func(w http.ResponseWriter, r *http.Request) {
 		filesMutex.RLock()
 		defer filesMutex.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(uploadedFilesV2)
+		json.NewEncoder(w).Encode(uploadedFilesV3)
 	}).Methods("GET")
-	r.HandleFunc("/api/v2/clear-changed-columns", clearChangedColumnsHandlerV2).Methods("POST")
-	r.HandleFunc("/api/v2/delete-all-records", deleteAllRecordsHandlerV2).Methods("POST")
-	r.HandleFunc("/api/v2/export", exportExcelHandlerV2).Methods("GET")
+	r.HandleFunc("/api/v3/clear-changed-columns", clearChangedColumnsHandlerV3).Methods("POST")
+	r.HandleFunc("/api/v3/delete-all-records", deleteAllRecordsHandlerV3).Methods("POST")
+	r.HandleFunc("/api/v3/export", exportExcelHandlerV3).Methods("GET")
 }
 
-func uploadHandlerV2(w http.ResponseWriter, r *http.Request) {
+func uploadHandlerV3(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(32 << 20)
 	if err != nil {
 		http.Error(w, "Failed to parse form", http.StatusBadRequest)
@@ -69,7 +71,7 @@ func uploadHandlerV2(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	records, err := processExcelV2(f)
+	records, err := processExcelV3(f)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to process Excel: %v", err), http.StatusInternalServerError)
 		return
@@ -77,17 +79,17 @@ func uploadHandlerV2(w http.ResponseWriter, r *http.Request) {
 
 	filesMutex.Lock()
 	exists := false
-	for _, fn := range uploadedFilesV2 {
+	for _, fn := range uploadedFilesV3 {
 		if fn == filename {
 			exists = true
 			break
 		}
 	}
 	if !exists {
-		uploadedFilesV2 = append(uploadedFilesV2, filename)
+		uploadedFilesV3 = append(uploadedFilesV3, filename)
 	}
-	filesCopy := make([]string, len(uploadedFilesV2))
-	copy(filesCopy, uploadedFilesV2)
+	filesCopy := make([]string, len(uploadedFilesV3))
+	copy(filesCopy, uploadedFilesV3)
 	filesMutex.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -98,7 +100,7 @@ func uploadHandlerV2(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
+func processExcelV3(f *excelize.File) ([]LeasingRecordV3, error) {
 	sheets := f.GetSheetList()
 	if len(sheets) == 0 {
 		return nil, fmt.Errorf("no sheets found")
@@ -114,24 +116,31 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 		return nil, fmt.Errorf("file must have at least header and one data row")
 	}
 
-	result := make([]LeasingRecordV2, 0)
+	result := make([]LeasingRecordV3, 0)
 
 	for rowNum := 2; rowNum <= len(rows); rowNum++ {
-		brand := getCellValueByColumn(f, sheetName, "I", rowNum)
-		model := getCellValueByColumn(f, sheetName, "J", rowNum)
-		vin := getCellValueByColumn(f, sheetName, "D", rowNum)
-		exposurePeriod := getCellValueByColumn(f, sheetName, "C", rowNum)
-		vehicleType := getCellValueByColumn(f, sheetName, "F", rowNum)
-		vehicleSubtype := getCellValueByColumn(f, sheetName, "G", rowNum)
-		year := getCellValueByColumn(f, sheetName, "N", rowNum)
-		mileage := getCellValueByColumn(f, sheetName, "AK", rowNum)
-		city := getCellValueByColumn(f, sheetName, "L", rowNum)
-		actualPrice := getCellValueByColumn(f, sheetName, "K", rowNum)
+		brand := getCellValueByColumn(f, sheetName, "K", rowNum)
+		model := getCellValueByColumn(f, sheetName, "L", rowNum)
+		vin := getCellValueByColumn(f, sheetName, "F", rowNum)
+		exposurePeriod := getCellValueByColumn(f, sheetName, "AW", rowNum)
+		vehicleType := getCellValueByColumn(f, sheetName, "G", rowNum)
+		vehicleSubtype := getCellValueByColumn(f, sheetName, "H", rowNum)
+		year := getCellValueByColumn(f, sheetName, "R", rowNum)
+		mileage := getCellValueByColumn(f, sheetName, "BA", rowNum)
+		city := getCellValueByColumn(f, sheetName, "P", rowNum)
+		actualPrice := getCellValueByColumn(f, sheetName, "N", rowNum)
+		status := getCellValueByColumn(f, sheetName, "C", rowNum)
 
 		if vin == "" {
 			continue
 		}
-		existing, exists := getRecordByVINV2(vin)
+
+		if status != "В свободной продаже" {
+			deleteRecordV3(vin)
+			continue
+		}
+
+		existing, exists := getRecordByVINV3(vin)
 
 		if !exists {
 			photos := searchPhotos(vin)
@@ -139,7 +148,7 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				photos = []string{}
 			}
 
-			record := LeasingRecordV2{
+			record := LeasingRecordV3{
 				Brand:          brand,
 				Model:          model,
 				VIN:            vin,
@@ -150,20 +159,21 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				Mileage:        mileage,
 				City:           city,
 				ActualPrice:    actualPrice,
+				Status:         status,
 				Photos:         photos,
 				IsNew:          true,
 				ChangedColumns: []string{},
 			}
 
-			id, err := insertRecordV2(record)
+			id, err := insertRecordV3(record)
 			if err != nil {
-				log.Printf("Failed to insert record v2: %v", err)
+				log.Printf("Failed to insert record: %v", err)
 				continue
 			}
 			record.ID = id
 			result = append(result, record)
 		} else {
-			changed := compareRecordsV2(existing, LeasingRecordV2{
+			changed := compareRecordsV3(existing, LeasingRecordV3{
 				Brand:          brand,
 				Model:          model,
 				VIN:            vin,
@@ -174,6 +184,7 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				Mileage:        mileage,
 				City:           city,
 				ActualPrice:    actualPrice,
+				Status:         status,
 			})
 
 			if len(changed) == 0 {
@@ -193,7 +204,7 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				photos = []string{}
 			}
 
-			record := LeasingRecordV2{
+			record := LeasingRecordV3{
 				ID:             existing.ID,
 				Brand:          brand,
 				Model:          model,
@@ -206,14 +217,15 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 				City:           city,
 				ActualPrice:    actualPrice,
 				OldPrice:       oldPrice,
+				Status:         status,
 				Photos:         photos,
 				IsNew:          false,
 				ChangedColumns: changed,
 			}
 
-			err := updateRecordV2(record)
+			err := updateRecordV3(record)
 			if err != nil {
-				log.Printf("Failed to update record v2: %v", err)
+				log.Printf("Failed to update record v3: %v", err)
 				continue
 			}
 
@@ -224,7 +236,7 @@ func processExcelV2(f *excelize.File) ([]LeasingRecordV2, error) {
 	return result, nil
 }
 
-func compareRecordsV2(old, new LeasingRecordV2) []string {
+func compareRecordsV3(old, new LeasingRecordV3) []string {
 	var changed []string
 	if old.Brand != new.Brand {
 		changed = append(changed, "brand")
@@ -253,25 +265,53 @@ func compareRecordsV2(old, new LeasingRecordV2) []string {
 	if old.ActualPrice != new.ActualPrice {
 		changed = append(changed, "actual_price")
 	}
+	if old.Status != new.Status {
+		changed = append(changed, "status")
+	}
 	return changed
 }
 
-func getRecordByVINV2(vin string) (LeasingRecordV2, bool) {
-	var rec LeasingRecordV2
+func getRecordByVINV3(vin string) (LeasingRecordV3, bool) {
+	var rec LeasingRecordV3
 	var brand, model, exposurePeriod, vehicleType, vehicleSubtype sql.NullString
-	var year, mileage, city, actualPrice, oldPrice sql.NullString
+	var year, mileage, city, actualPrice, oldPrice, status sql.NullString
 
 	err := db.QueryRow(`
-       SELECT id, brand, model, vin, exposure_period, vehicle_type, vehicle_subtype,
-              year, mileage, city, actual_price, old_price,
-               COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
-       FROM leasing_records_v2 WHERE vin=$1
-    `, vin).Scan(
+		SELECT id,
+		       brand,
+		       model,
+		       vin,
+		       exposure_period,
+		       vehicle_type,
+		       vehicle_subtype,
+		       year,
+		       mileage,
+		       city,
+		       actual_price,
+		       old_price,
+		       status,
+		       COALESCE(photos, '{}'),
+		       is_new,
+		       COALESCE(changed_columns, '{}')
+		FROM leasing_records_v3
+		WHERE vin = $1
+	`, vin).Scan(
 		&rec.ID,
-		&brand, &model, &rec.VIN, &exposurePeriod, &vehicleType, &vehicleSubtype,
-		&year, &mileage, &city, &actualPrice,
+		&brand,
+		&model,
+		&rec.VIN,
+		&exposurePeriod,
+		&vehicleType,
+		&vehicleSubtype,
+		&year,
+		&mileage,
+		&city,
+		&actualPrice,
 		&oldPrice,
-		pq.Array(&rec.Photos), &rec.IsNew, pq.Array(&rec.ChangedColumns),
+		&status,
+		pq.Array(&rec.Photos),
+		&rec.IsNew,
+		pq.Array(&rec.ChangedColumns),
 	)
 	if err != nil {
 		return rec, false
@@ -287,31 +327,35 @@ func getRecordByVINV2(vin string) (LeasingRecordV2, bool) {
 	rec.City = nullStringToString(city)
 	rec.ActualPrice = nullStringToString(actualPrice)
 	rec.OldPrice = nullStringToString(oldPrice)
+	rec.Status = nullStringToString(status)
 
 	return rec, true
 }
 
-func insertRecordV2(record LeasingRecordV2) (int, error) {
+func insertRecordV3(record LeasingRecordV3) (int, error) {
 	var id int
 	err := db.QueryRow(`
-       INSERT INTO leasing_records_v2
-       (brand, 
-        model, 
-        vin, 
-        exposure_period, 
-        vehicle_type, 
-        vehicle_subtype, 
-        year, mileage, 
-        city,
-        actual_price, 
-        old_price, 
-        photos, 
-        is_new, 
-        changed_columns)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-       RETURNING id
-    `,
-		record.Brand, record.Model,
+		INSERT INTO leasing_records_v3 (
+			brand,
+			model,
+			vin,
+			exposure_period,
+			vehicle_type,
+			vehicle_subtype,
+			year,
+			mileage,
+			city,
+			actual_price,
+			old_price,
+			status,
+			photos,
+			is_new,
+			changed_columns
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+		RETURNING id
+	`,
+		record.Brand,
+		record.Model,
 		record.VIN,
 		record.ExposurePeriod,
 		record.VehicleType,
@@ -321,6 +365,7 @@ func insertRecordV2(record LeasingRecordV2) (int, error) {
 		record.City,
 		record.ActualPrice,
 		record.OldPrice,
+		record.Status,
 		pq.Array(record.Photos),
 		record.IsNew,
 		pq.Array(record.ChangedColumns),
@@ -331,24 +376,25 @@ func insertRecordV2(record LeasingRecordV2) (int, error) {
 	return id, nil
 }
 
-func updateRecordV2(record LeasingRecordV2) error {
+func updateRecordV3(record LeasingRecordV3) error {
 	_, err := db.Exec(`
-       UPDATE leasing_records_v2 SET
-          brand           = $1,
-          model           = $2,
-          exposure_period = $3,
-          vehicle_type    = $4,
-          vehicle_subtype = $5,
-          year            = $6,
-          mileage         = $7,
-          city            = $8,
-          actual_price    = $9,
-          old_price       = $10,
-          photos          = $11, 
-          is_new          = $12,
-          changed_columns = $13,
-          updated_at      = CURRENT_TIMESTAMP
-       WHERE vin = $14
+        UPDATE leasing_records_v3 SET
+            brand = $1,
+            model = $2,
+            exposure_period = $3,
+            vehicle_type = $4,
+            vehicle_subtype = $5,
+            year = $6,
+            mileage = $7,
+            city = $8,
+            actual_price = $9,
+            old_price = $10,
+            photos = $11,
+            status = $12,
+            is_new = $13,
+            changed_columns = $14,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE vin = $15
     `,
 		record.Brand,
 		record.Model,
@@ -360,52 +406,49 @@ func updateRecordV2(record LeasingRecordV2) error {
 		record.City,
 		record.ActualPrice,
 		record.OldPrice,
-		pq.Array(record.Photos),
-		record.IsNew,
-		pq.Array(record.ChangedColumns),
-		record.VIN,
+		pq.Array(record.Photos),         // $11
+		record.Status,                   // $12
+		record.IsNew,                    // $13 ← ИСПРАВЛЕНО
+		pq.Array(record.ChangedColumns), // $14 ← ИСПРАВЛЕНО
+		record.VIN,                      // $15 ← ИСПРАВЛЕНО
 	)
 	return err
 }
 
-func getRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
+func getRecordsHandlerV3(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-       SELECT id, brand, 
-              model, 
-              vin, 
-              exposure_period, 
-              vehicle_type, 
-              vehicle_subtype,
-              year, 
-			   mileage, 
-			   city, 
-			   actual_price, 
-			   old_price,
-             COALESCE(photos, '{}'), is_new, COALESCE(changed_columns, '{}')
-       FROM leasing_records_v2 ORDER BY updated_at DESC
-    `)
+		SELECT id,
+		       brand,
+		       model,
+		       vin,
+		       exposure_period,
+		       vehicle_type,
+		       vehicle_subtype,
+		       year,
+		       mileage,
+		       city,
+		       actual_price,
+		       old_price,
+		       status,
+		       COALESCE(photos, '{}'),
+		       is_new,
+		       COALESCE(changed_columns, '{}')
+		FROM leasing_records_v3
+		ORDER BY updated_at DESC
+	`)
 	if err != nil {
 		http.Error(w, "Failed to fetch records", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	records := make([]LeasingRecordV2, 0)
+	records := make([]LeasingRecordV3, 0)
 
 	for rows.Next() {
-		var r LeasingRecordV2
-		var photos []string
-		var changedCols []string
-		var brand,
-			model,
-			exposurePeriod,
-			vehicleType,
-			vehicleSubtype sql.NullString
-		var year,
-			mileage,
-			city,
-			actualPrice,
-			oldPrice sql.NullString
+		var r LeasingRecordV3
+		var photos, changedCols []string
+		var brand, model, exposurePeriod, vehicleType, vehicleSubtype sql.NullString
+		var year, mileage, city, actualPrice, oldPrice, status sql.NullString
 
 		err := rows.Scan(
 			&r.ID,
@@ -420,10 +463,13 @@ func getRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 			&city,
 			&actualPrice,
 			&oldPrice,
-			pq.Array(&photos), &r.IsNew, pq.Array(&changedCols),
+			&status,
+			pq.Array(&photos),
+			&r.IsNew,
+			pq.Array(&changedCols),
 		)
 		if err != nil {
-			log.Println("Failed scan v2:", err)
+			log.Println("Failed scan:", err)
 			continue
 		}
 
@@ -437,6 +483,7 @@ func getRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 		r.City = nullStringToString(city)
 		r.ActualPrice = nullStringToString(actualPrice)
 		r.OldPrice = nullStringToString(oldPrice)
+		r.Status = nullStringToString(status)
 		r.Photos = photos
 		r.ChangedColumns = changedCols
 
@@ -454,8 +501,14 @@ func getRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(records)
 }
 
-func clearChangedColumnsHandlerV2(w http.ResponseWriter, r *http.Request) {
-	result, err := db.Exec(`UPDATE leasing_records_v2 SET changed_columns = '{}', updated_at = CURRENT_TIMESTAMP`)
+//
+//func healthHandler(w http.ResponseWriter, r *http.Request) {
+//	w.WriteHeader(http.StatusOK)
+//	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+//}
+
+func clearChangedColumnsHandlerV3(w http.ResponseWriter, r *http.Request) {
+	result, err := db.Exec(`UPDATE leasing_records_v3 SET changed_columns = '{}', updated_at = CURRENT_TIMESTAMP`)
 	if err != nil {
 		http.Error(w, "Failed to clear changed_columns", http.StatusInternalServerError)
 		return
@@ -470,7 +523,7 @@ func clearChangedColumnsHandlerV2(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func deleteAllRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
+func deleteAllRecordsHandlerV3(w http.ResponseWriter, r *http.Request) {
 	var payload struct {
 		Confirm string `json:"confirm"`
 	}
@@ -484,14 +537,14 @@ func deleteAllRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := db.Exec(`DELETE FROM leasing_records_v2`)
+	result, err := db.Exec(`DELETE FROM leasing_records_v3`)
 	if err != nil {
 		http.Error(w, "Failed to delete all records", http.StatusInternalServerError)
 		return
 	}
 
 	filesMutex.Lock()
-	uploadedFilesV2 = []string{}
+	uploadedFiles = []string{}
 	filesMutex.Unlock()
 
 	rowsAffected, _ := result.RowsAffected()
@@ -502,20 +555,23 @@ func deleteAllRecordsHandlerV2(w http.ResponseWriter, r *http.Request) {
 		"rows_deleted": rowsAffected,
 	})
 }
-func exportExcelHandlerV2(w http.ResponseWriter, r *http.Request) {
+func exportExcelHandlerV3(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-       SELECT brand, 
-              model, 
-              vin, 
-              exposure_period, 
-              vehicle_type, 
-              vehicle_subtype,
-              year, 
-           mileage, 
-           city, 
-           actual_price
-       FROM leasing_records_v2 ORDER BY updated_at DESC
-    `)
+		SELECT brand,
+		       model,
+		       vin,
+		       exposure_period,
+		       vehicle_type,
+		       vehicle_subtype,
+		       year,
+		       mileage,
+		       city,
+		       actual_price,
+		       old_price,
+		       status
+		FROM leasing_records_v3
+		ORDER BY updated_at DESC
+	`)
 	if err != nil {
 		http.Error(w, "Failed to fetch records", http.StatusInternalServerError)
 		return
@@ -529,7 +585,7 @@ func exportExcelHandlerV2(w http.ResponseWriter, r *http.Request) {
 	index, _ := f.NewSheet(sheetName)
 	f.SetActiveSheet(index)
 
-	headers := []string{"Марка", "Модель", "VIN", "Срок экспозиции (дн.)", "Вид ТС", "Подвид ТС", "Год выпуска", "Пробег", "Город", "Текущая цена", "Старая цена", "Разница"}
+	headers := []string{"Марка", "Модель", "VIN", "Срок экспозиции (дн.)", "Вид ТС", "Подвид ТС", "Год выпуска", "Пробег", "Город", "Текущая цена", "Старая цена", "Разница", "Статус"}
 	for i, header := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		f.SetCellValue(sheetName, cell, header)
@@ -538,10 +594,10 @@ func exportExcelHandlerV2(w http.ResponseWriter, r *http.Request) {
 	rowNum := 2
 	for rows.Next() {
 		var brand, model, vin, exposurePeriod, vehicleType, vehicleSubtype sql.NullString
-		var year, mileage, city, actualPrice, oldPrice sql.NullString
+		var year, mileage, city, actualPrice, oldPrice, status sql.NullString
 
 		err := rows.Scan(&brand, &model, &vin, &exposurePeriod, &vehicleType, &vehicleSubtype,
-			&year, &mileage, &city, &actualPrice, &oldPrice)
+			&year, &mileage, &city, &actualPrice, &oldPrice, &status)
 		if err != nil {
 			log.Println("Failed scan for export:", err)
 			continue
@@ -574,6 +630,7 @@ func exportExcelHandlerV2(w http.ResponseWriter, r *http.Request) {
 			nullStringToString(actualPrice),
 			nullStringToString(oldPrice),
 			difference,
+			nullStringToString(status),
 		}
 
 		for i, val := range values {
@@ -584,6 +641,9 @@ func exportExcelHandlerV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-	w.Header().Set("Content-Disposition", "attachment; filename=leasing_records_v2.xlsx")
+	w.Header().Set("Content-Disposition", "attachment; filename=leasing_records_v3.xlsx")
 	f.Write(w)
+}
+func deleteRecordV3(vin string) {
+	db.Exec("DELETE FROM leasing_records_v3 WHERE vin=$1", vin)
 }
