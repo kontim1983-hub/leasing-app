@@ -84,7 +84,7 @@ func screenshotHandlerV2(w http.ResponseWriter, r *http.Request) {
 
 	// Генерируем новый скриншот
 	log.Printf("⏳ Generating screenshot for: %s", url)
-	screenshot, err := captureScreenshot(url)
+	screenshot, err := captureScreenshot(url, "#gallery-offer-card > div:nth-child(1) > div > img")
 	if err != nil {
 		log.Printf("❌ Screenshot error for %s: %v", url, err)
 		// Отдаём плейсхолдер вместо ошибки
@@ -105,26 +105,21 @@ func screenshotHandlerV2(w http.ResponseWriter, r *http.Request) {
 }
 
 // captureScreenshot с настройками для Docker
-func captureScreenshot(url string) ([]byte, error) {
-	// Опции для работы в Docker (без sandbox)
+func captureScreenshot(url, selector string) ([]byte, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("no-sandbox", true),            // ВАЖНО для Docker
-		chromedp.Flag("disable-dev-shm-usage", true), // ВАЖНО для Docker
-		chromedp.Flag("disable-setuid-sandbox", true),
-		chromedp.Flag("disable-web-security", true),
-		chromedp.Flag("disable-features", "VizDisplayCompositor"),
-		chromedp.WindowSize(1280, 720),
+		chromedp.Flag("no-sandbox", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.WindowSize(1280, 800),
 	)
 
 	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer cancel()
 
-	ctx, cancel := chromedp.NewContext(allocCtx, chromedp.WithLogf(log.Printf))
+	ctx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 
-	// Таймаут на всю операцию
 	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -132,13 +127,19 @@ func captureScreenshot(url string) ([]byte, error) {
 
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(url),
-		chromedp.WaitReady("body", chromedp.ByQuery),
+
+		// ждём появления фото
+		chromedp.WaitVisible(selector, chromedp.ByQuery),
+
+		// даём время подгрузиться
 		chromedp.Sleep(2*time.Second),
-		chromedp.CaptureScreenshot(&buf),
+
+		// скриншот только элемента
+		chromedp.Screenshot(selector, &buf, chromedp.NodeVisible, chromedp.ByQuery),
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("chromedp error: %w", err)
+		return nil, err
 	}
 
 	return buf, nil
