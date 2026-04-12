@@ -2,16 +2,15 @@ package main
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/gorilla/mux"
-	_ "github.com/lib/pq"
 	"github.com/rs/cors"
+	_ "modernc.org/sqlite"
 )
 
 var db *sql.DB
@@ -21,44 +20,52 @@ var uploadedFilesV3 []string
 var filesMutex sync.RWMutex
 
 func main() {
-	var err error
-	dbHost := getEnv("DB_HOST", "localhost")
-	dbPort := getEnv("DB_PORT", "5432")
-	dbUser := getEnv("DB_USER", "postgres")
-	dbPassword := getEnv("DB_PASSWORD", "postgres")
-	dbName := getEnv("DB_NAME", "leasing")
+	exePath, _ := os.Executable()
+	exeDir := filepath.Dir(exePath)
 
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword, dbName)
-
-	for i := 0; i < 10; i++ {
-		db, err = sql.Open("postgres", connStr)
-		if err == nil {
-			err = db.Ping()
-			if err == nil {
-				break
-			}
+	if dataEnv := os.Getenv("DATA_DIR"); dataEnv != "" {
+		if filepath.IsAbs(dataEnv) {
+			os.MkdirAll(dataEnv, 0755)
+		} else {
+			os.MkdirAll(filepath.Join(exeDir, dataEnv), 0755)
 		}
-		log.Printf("Waiting for database... attempt %d/10", i+1)
-		time.Sleep(2 * time.Second)
 	}
 
+	dataDir := filepath.Join(exeDir, "data")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Fatal("Failed to create data directory:", err)
+	}
+
+	dbPath := filepath.Join(dataDir, "leasing.db")
+	connStr := dbPath
+
+	log.Println("Data directory:", dataDir)
+	log.Println("Database:", dbPath)
+
+	var err error
+	db, err = sql.Open("sqlite", connStr)
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		log.Fatal("Failed to open database:", err)
 	}
 	defer db.Close()
+
+	if err = db.Ping(); err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
 
 	initDB()
 
 	r := mux.NewRouter()
 
-	// V1 routes (первая вкладка)
 	RegisterV1Routes(r)
-
-	// V2 routes (вторая вкладка)
 	RegisterV2Routes(r)
-
 	RegisterV3Routes(r)
+
+	frontendDir := filepath.Join(exeDir, "frontend", "build")
+	if _, err := os.Stat(frontendDir); err == nil {
+		r.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.Dir(frontendDir))))
+		log.Println("Frontend static files:", frontendDir)
+	}
 
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
@@ -75,7 +82,7 @@ func main() {
 func initDB() {
 	query := `
     CREATE TABLE IF NOT EXISTS leasing_records (
-       id SERIAL PRIMARY KEY,
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
        subject TEXT,
        location TEXT,
        subject_type TEXT,
@@ -87,11 +94,11 @@ func initDB() {
        approved_price TEXT,
        old_price TEXT,
        status TEXT,
-       photos TEXT[],
-       is_new BOOLEAN DEFAULT false,
-       changed_columns TEXT[],
-       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       photos TEXT,
+       is_new INTEGER DEFAULT 0,
+       changed_columns TEXT,
+       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     `
 	_, err := db.Exec(query)
@@ -101,7 +108,7 @@ func initDB() {
 
 	query2 := `
     CREATE TABLE IF NOT EXISTS leasing_records_v2 (
-       id SERIAL PRIMARY KEY,
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
        brand TEXT,
        model TEXT,
        vin TEXT UNIQUE NOT NULL,
@@ -114,11 +121,11 @@ func initDB() {
        actual_price TEXT,
        old_price TEXT,
        status TEXT,
-       photos TEXT[],
-       is_new BOOLEAN DEFAULT false,
-       changed_columns TEXT[],
-       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       photos TEXT,
+       is_new INTEGER DEFAULT 0,
+       changed_columns TEXT,
+       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     `
 	_, err = db.Exec(query2)
@@ -128,7 +135,7 @@ func initDB() {
 
 	query3 := `
     CREATE TABLE IF NOT EXISTS leasing_records_v3 (
-       id SERIAL PRIMARY KEY,
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
        brand TEXT,
        model TEXT,
        vin TEXT UNIQUE NOT NULL,
@@ -141,16 +148,16 @@ func initDB() {
        actual_price TEXT,
        old_price TEXT,
        status TEXT,
-       photos TEXT[],
-       is_new BOOLEAN DEFAULT false,
-       changed_columns TEXT[],
-       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       photos TEXT,
+       is_new INTEGER DEFAULT 0,
+       changed_columns TEXT,
+       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     `
 	_, err = db.Exec(query3)
 	if err != nil {
-		log.Fatal("Failed to create table v2:", err)
+		log.Fatal("Failed to create table v3:", err)
 	}
 }
 

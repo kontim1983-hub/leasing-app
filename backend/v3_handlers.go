@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/gorilla/mux"
-	"github.com/lib/pq"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -275,6 +274,8 @@ func getRecordByVINV3(vin string) (LeasingRecordV3, bool) {
 	var rec LeasingRecordV3
 	var brand, model, exposurePeriod, vehicleType, vehicleSubtype sql.NullString
 	var year, mileage, city, actualPrice, oldPrice, status sql.NullString
+	var photosJSON, changedJSON sql.NullString
+	var isNewInt int
 
 	err := db.QueryRow(`
 		SELECT id,
@@ -290,11 +291,11 @@ func getRecordByVINV3(vin string) (LeasingRecordV3, bool) {
 		       actual_price,
 		       old_price,
 		       status,
-		       COALESCE(photos, '{}'),
+		       photos,
 		       is_new,
-		       COALESCE(changed_columns, '{}')
+		       changed_columns
 		FROM leasing_records_v3
-		WHERE vin = $1
+		WHERE vin = ?
 	`, vin).Scan(
 		&rec.ID,
 		&brand,
@@ -309,9 +310,9 @@ func getRecordByVINV3(vin string) (LeasingRecordV3, bool) {
 		&actualPrice,
 		&oldPrice,
 		&status,
-		pq.Array(&rec.Photos),
-		&rec.IsNew,
-		pq.Array(&rec.ChangedColumns),
+		&photosJSON,
+		&isNewInt,
+		&changedJSON,
 	)
 	if err != nil {
 		return rec, false
@@ -328,12 +329,33 @@ func getRecordByVINV3(vin string) (LeasingRecordV3, bool) {
 	rec.ActualPrice = nullStringToString(actualPrice)
 	rec.OldPrice = nullStringToString(oldPrice)
 	rec.Status = nullStringToString(status)
+	rec.IsNew = isNewInt == 1
+
+	if photosJSON.Valid {
+		json.Unmarshal([]byte(photosJSON.String), &rec.Photos)
+	}
+	if changedJSON.Valid {
+		json.Unmarshal([]byte(changedJSON.String), &rec.ChangedColumns)
+	}
+	if rec.Photos == nil {
+		rec.Photos = []string{}
+	}
+	if rec.ChangedColumns == nil {
+		rec.ChangedColumns = []string{}
+	}
 
 	return rec, true
 }
 
 func insertRecordV3(record LeasingRecordV3) (int, error) {
 	var id int
+	photosJSON, _ := json.Marshal(record.Photos)
+	changedJSON, _ := json.Marshal(record.ChangedColumns)
+	isNew := 0
+	if record.IsNew {
+		isNew = 1
+	}
+
 	err := db.QueryRow(`
 		INSERT INTO leasing_records_v3 (
 			brand,
@@ -351,8 +373,7 @@ func insertRecordV3(record LeasingRecordV3) (int, error) {
 			photos,
 			is_new,
 			changed_columns
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-		RETURNING id
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	`,
 		record.Brand,
 		record.Model,
@@ -366,9 +387,9 @@ func insertRecordV3(record LeasingRecordV3) (int, error) {
 		record.ActualPrice,
 		record.OldPrice,
 		record.Status,
-		pq.Array(record.Photos),
-		record.IsNew,
-		pq.Array(record.ChangedColumns),
+		string(photosJSON),
+		isNew,
+		string(changedJSON),
 	).Scan(&id)
 	if err != nil {
 		return 0, err
@@ -377,24 +398,31 @@ func insertRecordV3(record LeasingRecordV3) (int, error) {
 }
 
 func updateRecordV3(record LeasingRecordV3) error {
+	photosJSON, _ := json.Marshal(record.Photos)
+	changedJSON, _ := json.Marshal(record.ChangedColumns)
+	isNew := 0
+	if record.IsNew {
+		isNew = 1
+	}
+
 	_, err := db.Exec(`
         UPDATE leasing_records_v3 SET
-            brand = $1,
-            model = $2,
-            exposure_period = $3,
-            vehicle_type = $4,
-            vehicle_subtype = $5,
-            year = $6,
-            mileage = $7,
-            city = $8,
-            actual_price = $9,
-            old_price = $10,
-            photos = $11,
-            status = $12,
-            is_new = $13,
-            changed_columns = $14,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE vin = $15
+            brand = ?,
+            model = ?,
+            exposure_period = ?,
+            vehicle_type = ?,
+            vehicle_subtype = ?,
+            year = ?,
+            mileage = ?,
+            city = ?,
+            actual_price = ?,
+            old_price = ?,
+            photos = ?,
+            status = ?,
+            is_new = ?,
+            changed_columns = ?,
+            updated_at = datetime('now')
+        WHERE vin = ?
     `,
 		record.Brand,
 		record.Model,
@@ -406,11 +434,11 @@ func updateRecordV3(record LeasingRecordV3) error {
 		record.City,
 		record.ActualPrice,
 		record.OldPrice,
-		pq.Array(record.Photos),         // $11
-		record.Status,                   // $12
-		record.IsNew,                    // $13 ← ИСПРАВЛЕНО
-		pq.Array(record.ChangedColumns), // $14 ← ИСПРАВЛЕНО
-		record.VIN,                      // $15 ← ИСПРАВЛЕНО
+		string(photosJSON),
+		record.Status,
+		isNew,
+		string(changedJSON),
+		record.VIN,
 	)
 	return err
 }
@@ -430,9 +458,9 @@ func getRecordsHandlerV3(w http.ResponseWriter, r *http.Request) {
 		       actual_price,
 		       old_price,
 		       status,
-		       COALESCE(photos, '{}'),
+		       photos,
 		       is_new,
-		       COALESCE(changed_columns, '{}')
+		       changed_columns
 		FROM leasing_records_v3
 		ORDER BY updated_at DESC
 	`)
@@ -446,7 +474,8 @@ func getRecordsHandlerV3(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var r LeasingRecordV3
-		var photos, changedCols []string
+		var photosJSON, changedJSON sql.NullString
+		var isNewInt int
 		var brand, model, exposurePeriod, vehicleType, vehicleSubtype sql.NullString
 		var year, mileage, city, actualPrice, oldPrice, status sql.NullString
 
@@ -464,9 +493,9 @@ func getRecordsHandlerV3(w http.ResponseWriter, r *http.Request) {
 			&actualPrice,
 			&oldPrice,
 			&status,
-			pq.Array(&photos),
-			&r.IsNew,
-			pq.Array(&changedCols),
+			&photosJSON,
+			&isNewInt,
+			&changedJSON,
 		)
 		if err != nil {
 			log.Println("Failed scan:", err)
@@ -484,9 +513,14 @@ func getRecordsHandlerV3(w http.ResponseWriter, r *http.Request) {
 		r.ActualPrice = nullStringToString(actualPrice)
 		r.OldPrice = nullStringToString(oldPrice)
 		r.Status = nullStringToString(status)
-		r.Photos = photos
-		r.ChangedColumns = changedCols
+		r.IsNew = isNewInt == 1
 
+		if photosJSON.Valid {
+			json.Unmarshal([]byte(photosJSON.String), &r.Photos)
+		}
+		if changedJSON.Valid {
+			json.Unmarshal([]byte(changedJSON.String), &r.ChangedColumns)
+		}
 		if r.Photos == nil {
 			r.Photos = []string{}
 		}
@@ -508,7 +542,7 @@ func getRecordsHandlerV3(w http.ResponseWriter, r *http.Request) {
 //}
 
 func clearChangedColumnsHandlerV3(w http.ResponseWriter, r *http.Request) {
-	result, err := db.Exec(`UPDATE leasing_records_v3 SET changed_columns = '{}', updated_at = CURRENT_TIMESTAMP`)
+	result, err := db.Exec(`UPDATE leasing_records_v3 SET changed_columns = '[]', updated_at = datetime('now')`)
 	if err != nil {
 		http.Error(w, "Failed to clear changed_columns", http.StatusInternalServerError)
 		return
@@ -645,5 +679,5 @@ func exportExcelHandlerV3(w http.ResponseWriter, r *http.Request) {
 	f.Write(w)
 }
 func deleteRecordV3(vin string) {
-	db.Exec("DELETE FROM leasing_records_v3 WHERE vin=$1", vin)
+	db.Exec("DELETE FROM leasing_records_v3 WHERE vin=?", vin)
 }
