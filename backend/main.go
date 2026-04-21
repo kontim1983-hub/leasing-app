@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +19,15 @@ var uploadedFiles []string
 var uploadedFilesV2 []string
 var uploadedFilesV3 []string
 var filesMutex sync.RWMutex
+var shutdownFunc func()
+
+func Shutdown() {
+	log.Println("Shutdown signal received")
+	if shutdownFunc != nil {
+		shutdownFunc()
+	}
+	os.Exit(0)
+}
 
 func main() {
 	exePath, _ := os.Executable()
@@ -57,11 +67,26 @@ func main() {
 
 	r := mux.NewRouter()
 
+	r.HandleFunc("/api/shutdown", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "shutting_down"})
+		go func() {
+			log.Println("Shutting down server...")
+			if db != nil {
+				db.Close()
+			}
+			os.Exit(0)
+		}()
+	}).Methods("POST")
+
 	RegisterV1Routes(r)
 	RegisterV2Routes(r)
 	RegisterV3Routes(r)
 
 	frontendDir := filepath.Join(exeDir, "frontend", "build")
+	if _, err := os.Stat(frontendDir); err != nil {
+		frontendDir = filepath.Join(exeDir, "frontend")
+	}
 	if _, err := os.Stat(frontendDir); err == nil {
 		r.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.Dir(frontendDir))))
 		log.Println("Frontend static files:", frontendDir)

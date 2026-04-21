@@ -1,0 +1,18 @@
+[Settings]
+AppName=Leasing App
+Version=1.0.0
+DataDir=%INSTALL_DIR%\data
+LogsDir=%INSTALL_DIR%\logs
+
+[Database]
+Host=localhost
+Port=5432
+User=postgres
+Password=postgres
+Name=leasing
+
+[Server]
+Port=8080
+
+[Frontend]
+Port=3000

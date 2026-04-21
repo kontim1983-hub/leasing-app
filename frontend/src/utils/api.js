@@ -188,3 +188,9 @@ export const exportExcel = async () => {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
 };
+
+export const shutdownApp = async () => {
+    const response = await fetch(`${API_URL}/api/shutdown`, { method: 'POST' });
+    if (!response.ok) throw new Error('Ошибка завершения');
+    return await response.json();
+};
